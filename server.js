@@ -6,17 +6,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 伝言掲示板のデータ（許可が出たかどうかのフラグ）
 let permissionGranted = false;
 
-// === ① スマホと会話するためのAPI（掲示板） ===
+// スマホ（監視側）が許可状態を確認するためのエンドポイント
 app.get('/check', (req, res) => {
-    // スマホから「許可出た？」と聞かれたら答える
     res.json({ granted: permissionGranted });
 });
 
+// スマホが更新完了した際にフラグをリセットする
 app.post('/reset', (req, res) => {
-    // スマホが更新を終えたらフラグを下ろす
     permissionGranted = false;
     res.json({ success: true });
 });
@@ -25,7 +23,6 @@ const listener = app.listen(process.env.PORT || 3000, () => {
     console.log('中継サーバーがポート ' + listener.address().port + ' で起動しました！');
 });
 
-// === ② Discord Botの処理 ===
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -38,10 +35,15 @@ client.on('ready', () => {
     console.log(`Botがログインしました: ${client.user.tag}`);
 });
 
-// メッセージを監視
 client.on('messageCreate', async (message) => {
-    // v12のスマホが送信する「自動学習を実行しました」という言葉に反応する
-    if (message.webhookId && message.content.includes("自動学習を実行しました")) {
+    // 自分自身（Bot）のメッセージは無視して無限ループを防止
+    if (message.author.id === client.user.id) return;
+
+    // デバッグログ：受信メッセージをターミナルに表示
+    console.log(`受信メッセージ: "${message.content}" (送信者ID: ${message.author.id}, Webhook: ${!!message.webhookId})`);
+
+    // キーワードが含まれているかチェック
+    if (message.content.includes("自動学習を実行しました")) {
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -54,16 +56,19 @@ client.on('messageCreate', async (message) => {
                     .setStyle(ButtonStyle.Danger),
             );
 
-        await message.reply({ content: '司令塔！地形更新の要請が来ています！', components: [row] });
+        // Webhook相手にはreplyよりchannel.sendの方が安定します
+        await message.channel.send({ 
+            content: '司令塔！地形更新の要請が来ています！', 
+            components: [row] 
+        });
     }
 });
 
-// ボタンが押された時の処理
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
     if (interaction.customId === 'allow_update') {
-        permissionGranted = true; // 掲示板のフラグを立てる！
+        permissionGranted = true;
         await interaction.update({ content: '✅ **更新を許可しました！** スマホ側で背景を更新します。', components: [] });
     } else if (interaction.customId === 'deny_update') {
         permissionGranted = false;
@@ -71,5 +76,4 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// トークンを使ってログイン
 client.login(process.env.DISCORD_TOKEN);
